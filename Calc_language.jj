@@ -1,0 +1,511 @@
+PARSER_BEGIN(Calc_language)
+
+import java.util.*;
+import java.util.ArrayList;
+
+class Function {
+  /* Class to store the name, parameter and contents of all functions */
+  private String name;
+  private String parameter;
+  private ArrayList<Token> tokenStack;
+
+  public Function(String name, String parameter, ArrayList<Token> tokenStack) {
+    this.name = name;
+    this.parameter = parameter;
+    this.tokenStack = tokenStack;
+  }
+
+  public String getName() {
+    return this.name;
+  }
+
+  public String getParameter() {
+    return this.parameter;
+  }
+
+  public ArrayList<Token> getTokenStack() {
+    ArrayList<Token> temp = new ArrayList<>();
+    for (Token i : this.tokenStack) {
+      temp.add(i);
+    }
+    return temp;
+  }
+
+  public String toString() {
+    return this.name+" "+this.parameter;
+  }
+}
+
+class Node {
+  /* Node data type used to store tokens while parsing, they are then used to evaluate the program */
+  private String data;
+  private Node left;
+  private Node right;
+  private int kind;
+
+  public Node(String data, int kind){
+    this.data = data;
+    this.kind = kind;
+    this.left = null;
+    this.right = null;
+  }
+
+  public void setData(String data) {
+    this.data = data;
+  }
+
+  public void setLeft(Node left) {
+    this.left = left;
+  }
+
+  public void setRight(Node right) {
+    this.right = right;
+  }
+
+  public String getData() {
+    return this.data;
+  }
+
+  public Node getLeft() {
+    return this.left;
+  }
+
+  public Node getRight() {
+    return this.right;
+  }
+
+  public int getKind() {
+    return this.kind;
+  }
+
+  public int evaluate() {
+    /* Evaluates entire tree treating the node evaluate() is called on as the root
+       It does this bottom up; recurses to the leaves and builds up from there */
+    switch (kind) {
+      case 1:
+        return this.left.evaluate() + this.right.evaluate();
+      case 2:
+        return this.left.evaluate() * this.right.evaluate();
+      default:
+        return Integer.parseInt(this.data);
+    }
+  }
+
+}
+
+class Stack<T> {
+  /* Stack structure used for evaluation */
+  private ArrayList<T> stack;
+
+  public Stack() {
+    stack = new ArrayList<T>();
+  }
+
+  public boolean isEmpty() {
+    return stack.isEmpty();
+  }
+
+  public void push(T item) {
+    stack.add(item);
+  }
+
+  public T pop() {
+    if (isEmpty()) {
+      throw new RuntimeException("Stack is empty.");
+    }
+    return stack.remove(stack.size() - 1);
+  }
+
+  public T peek() {
+    if (isEmpty()) {
+      return null;
+    }
+    return stack.get(stack.size()-1);
+  }
+
+  public int size() {
+    return stack.size();
+  }
+
+}
+
+public class Calc_language {
+  /* Reads, evaluates and handles errors for PLM programs */
+
+  public static void main(String args []) throws ParseException {
+    /* Calls the parser, checks for errors and evaluates program through function calls */
+    try{
+      ArrayList<Function> functionArray = new ArrayList<Function>(); //used to store all the functions of a PLM program
+      int lineNum = 1; //used to track linenumber for custom errors
+      Calc_language parser = new Calc_language(System.in);
+      parser.Start(functionArray, lineNum);
+      finalChecks(functionArray); //runs checks for logic errors that the parser can't identify
+
+      if (divergentCheck(functionArray)) { //checks for divergence
+        System.out.println("PASS");
+        System.out.println("DIVERGENCE");
+      }else{ //evaluates program if not divergent
+        System.out.println("PASS");
+        System.out.println(Integer.toString(evaluate(functionArray)));
+      }
+    }catch (Throwable e) { //handles error when the PLM is incorrect
+      System.out.println("FAIL");
+      handleError(e.getMessage());
+    }
+  }
+
+  public static void handleError(String errMsg) {
+    /* Handles all errors both from javacc and custom ones thrown during parsing */
+    String line = getLine(errMsg);
+    String message = "Undefined error occured";
+    if (errMsg.contains("Encountered \" \"MAIN")) {
+      if (errMsg.contains("\"DEF\"")) {
+        message = "Expected \"DEF\"";
+      }else {
+        message = "Can't make calls to main";
+      }
+    }
+    else if (errMsg.contains("CUSTOM")) {
+      String result = errMsg.replaceAll("CUSTOM|line\\s\\d+,","");
+      message = result;
+    }
+    else if (errMsg.contains("Lexical error")) {
+      message = "Unknown symbol encountered";
+    }
+    else if (errMsg.contains("expecting one")) {
+      if (errMsg.contains("MAIN")) {
+        message = "Invalid function name";
+      }else if (errMsg.contains("DEF")) {
+        message = "Expected \"DEF\"";
+      }else if (errMsg.contains("FUNC") || errMsg.contains("\"+\"")) {
+        message = "Invalid function contents";
+      }
+    }else if (errMsg.contains("expecting")) {
+      String result = errMsg.replaceAll("[\n|\\s|\\.|<|>]","");
+      String result2 = result.replaceAll(".*expecting:","");
+      message = "Expected " + result2.toLowerCase();
+      if (message.equals("Expected \"\"")){
+        message = "Expected space";
+      }
+    }
+    /* outputs line number and err message to err stream */
+    System.err.println(line);
+    System.err.println(message);
+  }
+
+  public static String getLine(String errMsg) {
+    /* Gets line number from error messages using replaceAll with some simple regex */
+    String result = errMsg.replaceAll("[\n|\\s]","");
+    String result2 = result.replaceAll(".*line",""); 
+    String result3 = result2.replaceAll(",.*","");
+    return result3;
+  }
+
+  public static void finalChecks(ArrayList<Function> functionArray) throws ParseException {
+    /* Checks for any undefined functions called in the program */
+    /* Grabs names of defined functions from functionArray and puts them in a new array functionNames for .contains() later */
+    ArrayList<String> functionNames = new ArrayList<String>();
+    for (int i=0; i<functionArray.size(); i++) {
+      functionNames.add(functionArray.get(i).getName());
+    }
+
+    /* Throws error when MAIN isn't defined */
+    if (!functionNames.contains("MAIN")){
+      throw new ParseException("CUSTOMMAIN not defined line 0,");
+    }
+
+    /* Checks that all functions in the tokenStacks for all defined functions are indeed defined functions */
+    for (int i=0; i<functionArray.size(); i++) {
+      ArrayList<Token> temp = functionArray.get(i).getTokenStack();
+      for (int j=0; j<temp.size(); j++) {
+        if (temp.get(j).kind==12){
+          if (!functionNames.contains(temp.get(j).image)){
+            throw new ParseException("CUSTOMUndefined function '" + temp.get(j).image + "' called line " + Integer.toString(i+1) + ",");
+          }
+        }
+      }
+    }
+  }
+
+  public static boolean divergentCheck(ArrayList<Function> functionArray) {
+    /* Creates graph from functions with a directed edge from u->v if u calls v in its definition, then runs a DAG check to determine divergence */
+    ArrayList<Token> tempTokens;
+    Map<String, List<String>> adjacencyList = new HashMap<>();
+
+    for (int i=0; i<functionArray.size(); i++) { //creates the graph
+      tempTokens = functionArray.get(i).getTokenStack();
+      adjacencyList.put(functionArray.get(i).getName(), new ArrayList<String>());
+      for (int j=0; j<tempTokens.size(); j++) {
+        if (tempTokens.get(j).kind==12) {
+          addEdge(functionArray.get(i).getName(), tempTokens.get(j).image, adjacencyList);
+        }
+      }
+    }
+
+    if (checkCycle(adjacencyList)) { //runs the DAG(directed acyclic graph) check
+      return true;
+    }else {
+      return false;
+    }
+  }
+
+  public static Function getFunction(String name, ArrayList<Function> functionArray) {
+    /* gets a function from the functionArray given the function name */
+    for (int i=0; i<functionArray.size(); i++) {
+      if (functionArray.get(i).getName().equals(name)) {
+        return functionArray.get(i);
+      }
+    }
+    return null;
+  }
+
+  public static void addEdge(String u, String v, Map<String, List<String>> adjacencyList){
+    /* adds edges given they don't already exist (this would happen if a function calls the same function twice) */
+    if (!adjacencyList.get(u).contains(v)) {
+      adjacencyList.get(u).add(v);
+    }
+  }
+
+  public static boolean checkCycle(Map<String, List<String>> adjacencyList){
+    /* Checks for cycle in given graph using an adapted DFS(depth first search) algorithm */
+    //keeps track of both visited and current nodes
+    ArrayList<String> visited = new ArrayList<>();
+    ArrayList<String> inStack = new ArrayList<>();
+
+    // Iterating for i = 0 To i = V - 1
+    // to detect cycle in different 
+    // DFS trees. 
+    for (String node : adjacencyList.keySet()){
+      // Check if cycle exists.
+      if (checkCycleUtil(node, visited, inStack, adjacencyList)){
+        return true;
+      }
+    }
+    // Returning false, if no cycle is found.
+    return false;
+
+  }
+
+  public static boolean checkCycleUtil(String node, ArrayList<String> visited, ArrayList<String> inStack, Map<String, List<String>> adjacencyList){
+    /* Performs computation for the checkCycle function */
+    // Check if node exists in the
+    // recursive stack.
+    if (inStack.contains(node))
+      return true;
+      
+    // Check if node is already visited.
+    if (visited.contains(node))
+      return false;
+    
+    // Marking node as visited.
+    visited.add(node);
+
+    // Marking node to be present in
+    // recursive stack.
+    inStack.add(node);
+
+    // Iterate for all adjacent of 
+    // 'node'.
+    for (String v : adjacencyList.get(node)){
+      // Recurse for 'v'.
+      if (checkCycleUtil(v, visited, inStack, adjacencyList))
+        return true;
+    }
+
+    // Mark 'node' to be removed
+    // from the recursive stack.
+    inStack.remove(node);
+
+    // Return false if no cycle exists.
+    return false;
+  }
+
+  public static int evaluate(ArrayList<Function> functionArray) {
+    /* Evaluates a correct PLM program's output */
+    ArrayList<Token> mainTokens = getFunction("MAIN",functionArray).getTokenStack();
+    return evaluateButDeeper(functionArray, mainTokens, null).evaluate();
+  }
+
+  public static Node evaluateButDeeper(ArrayList<Function> functionArray, ArrayList<Token> tokens, Node parameter) {
+    /* Uses an operator stack and a 'num' stack (numbers and functions) to reorder tokens into a stack that can be parsed
+       to create a tree of token nodes representing the program. This is then returned and evaluated in evaluate() */
+    Stack<Node> opStack = new Stack<>();
+    Stack<Node> numStack = new Stack<>();
+    while (!tokens.isEmpty()) { //while there are still tokens to be parsed
+      if (tokens.get(0).kind==1) { //if token is '+'
+        Node node = new Node(tokens.get(0).image,1);
+        if (!(opStack.peek()==null) && opStack.peek().getKind()==2){ //reorders stack to allow multiplication precedence over addition
+          Node temp = opStack.pop();
+          temp.setLeft(numStack.pop());
+          temp.setRight(numStack.pop());
+          numStack.push(temp);
+        }
+        opStack.push(node);
+      }else if (tokens.get(0).kind==2) { //if token is '*'
+        Node node = new Node(tokens.get(0).image,2);
+        opStack.push(node);
+      }else if (tokens.get(0).kind==13) { //if token is a parameter
+        numStack.push(parameter);
+      }else if (tokens.get(0).kind==14) {
+        Node node = new Node(tokens.get(0).image,14); //if token is a number
+        numStack.push(node);
+      }else if (tokens.get(0).kind==12) { //if token is a function
+        //evaluates the contents of the function called to its own tree and lets the root node be returned and treated as a 'num'
+        Node node = evaluateButDeeper(functionArray, getFunction(tokens.get(0).image,functionArray).getTokenStack(), evaluateButDeeper(functionArray, findRemainingTokens(tokens), parameter));
+        numStack.push(node);
+      }
+      tokens.remove(0);    
+    }
+
+    while (!opStack.isEmpty()) { //while operator stack has tokens to be parsed it creates tree assigning numbers 2 'numbers' as children to each operator
+      Node temp = opStack.pop();
+      temp.setLeft(numStack.pop());
+      temp.setRight(numStack.pop());
+      numStack.push(temp);
+    }
+    return numStack.pop();
+  }
+
+  public static ArrayList<Token> findRemainingTokens(ArrayList<Token> tokens) {
+    /* Returns list of tokens that are inside a function call and removes them from overall token list */
+    ArrayList<Token> remainingTokens = new ArrayList<Token>();
+    int total = 0;
+    while (true) {
+      if (tokens.get(1).kind==12) { //if token is a function
+        remainingTokens.add(tokens.get(1));
+        total++;
+      }else if (tokens.get(1).kind==4) { //if token is ')'
+        if (total!=0) {
+          remainingTokens.add(tokens.get(1));
+          total--;
+        }else {
+          tokens.remove(1);
+          return remainingTokens;
+        }
+      }else {
+        remainingTokens.add(tokens.get(1));
+      }
+      tokens.remove(1);
+    }
+  }
+}
+
+PARSER_END(Calc_language)
+
+/* Defines tokens for grammar */
+TOKEN :                             
+{
+        < ADD     : "+" >                   // 1
+    |   < MULTI   : "*" >                   // 2
+    |   < LBRACE  : "(" >
+    |   < RBRACE  : ")" >                   // 4
+    |   < LCURLY  : "{" >
+    |   < RCURLY  : "}" >
+    |   < SPACE   : " " >
+    |   < DEF     : "DEF" >
+    |   < MAIN    : "MAIN" >                // 9
+    |   < SEMI    : ";" >
+    |   < EOL     : "\n" | "\r" | "\r\n" >
+    |   < FUNC    : ( ["A"-"Z"] )+ >        // 12
+    |   < PARAM   : ( ["a"-"z"] )+ >        // 13
+    |   < NUM     : ( ["0"-"9"])+ >         // 14
+}
+
+/* Checks the first line of a PLM */
+void Start(ArrayList<Function> functionArray, int lineNum) : { }
+{
+  <DEF> <SPACE> Def(functionArray, lineNum) <SPACE> <SEMI> <EOL> NewLine(functionArray, lineNum)
+}
+
+/* Checks any additional lines of a PLM, also increments lineNum by 1 */
+void NewLine(ArrayList<Function> functionArray, int lineNum) : { lineNum++; }
+{ //program can end properly by reading <EOF> here
+  <EOF> | <DEF> <SPACE> Def(functionArray, lineNum) <SPACE> <SEMI> <EOL> NewLine(functionArray, lineNum)
+}
+
+/* Checks for MAIN or outer function */
+void Def(ArrayList<Function> functionArray, int lineNum) : { Token fname; Token fparam; Function func; ArrayList<Token> tokenStack = new ArrayList<Token>(); }
+{
+  <MAIN> DefNext(functionArray, lineNum, null, tokenStack) {
+    for (int i=0; i<functionArray.size(); i++){
+      if (functionArray.get(i).getName().equals("MAIN")){ //throws error if MAIN defined more than once
+        throw new ParseException("CUSTOMMAIN defined more than once line " + Integer.toString(lineNum) + ",");
+      }
+    }
+    func = new Function("MAIN", null, tokenStack);
+    functionArray.add(func);
+  } |
+  fname=<FUNC> <SPACE> fparam=<PARAM> DefNext(functionArray, lineNum, fparam.image, tokenStack) {
+    for (int i=0; i<functionArray.size(); i++){
+      if (functionArray.get(i).getName().equals(fname.image)){ //throws error if a function is defined more than once
+        throw new ParseException("CUSTOMFunction " + fname.image + " defined more than once line " + Integer.toString(lineNum) + ",");
+      }
+    }
+    func = new Function(fname.image, fparam.image, tokenStack);
+    functionArray.add(func);
+  }
+}
+
+/* Checks an outer functions contents */
+void DefNext(ArrayList<Function> functionArray, int lineNum, String param, ArrayList<Token> tokenStack) : {  }
+{
+  <SPACE> <LCURLY> <SPACE> PostFunc(functionArray, lineNum, param, tokenStack) <RCURLY>
+}
+
+/* Checks for parameter, number or function within an outer functions contents */
+void PostFunc(ArrayList<Function> functionArray, int lineNum, String param, ArrayList<Token> tokenStack) : { Token newParam; Token num; Token func; }
+{
+  newParam=<PARAM> {
+    if (param == null) { //throws an error when a parameter is referenced in MAIN
+      throw new ParseException("CUSTOMParameter '" + newParam.image + "' referenced in MAIN, which cannot contain parameters line " + Integer.toString(lineNum) + ",");
+    }
+    if (!newParam.image.equals(param)) { //throws an error when the incorrect parameter is referenced in a function
+      throw new ParseException("CUSTOMUndefined parameter referenced '" + newParam.image + "', parameter for this function previously defined as " + param + " line " + Integer.toString(lineNum) + ",");
+    }
+    tokenStack.add(newParam);
+  } ContinueCheck(functionArray, lineNum, param, tokenStack) |
+  num=<NUM> { tokenStack.add(num); } ContinueCheck(functionArray, lineNum, param, tokenStack) |
+  func=<FUNC> {
+    tokenStack.add(func); } <LBRACE> FuncParam(functionArray, lineNum, param, tokenStack) ContinueCheck(functionArray, lineNum, param, tokenStack)
+}
+
+/* Allows the program the option to end an outer function definition or continue */
+void ContinueCheck(ArrayList<Function> functionArray, int lineNum, String param, ArrayList<Token> tokenStack) : {}
+{
+  <SPACE> | PostVar(functionArray, lineNum, param, tokenStack)
+}
+
+/* Checks for '+' or '*' and correct syntax after a number, parameter or inner function within an outer function's contents */
+void PostVar(ArrayList<Function> functionArray, int lineNum, String param, ArrayList<Token> tokenStack) : { Token add; Token multi; }
+{
+  add=<ADD> { tokenStack.add(add); } PostFunc(functionArray, lineNum, param, tokenStack) | multi=<MULTI> { tokenStack.add(multi); } PostFunc(functionArray, lineNum, param, tokenStack)
+}
+
+/* Allows the program the option to end an inner function definition or continue */
+void ContinueCheck2(ArrayList<Function> functionArray, int lineNum, String param, ArrayList<Token> tokenStack) : { Token rbrace;}
+{
+  rbrace=<RBRACE> { tokenStack.add(rbrace); } | PostVar2(functionArray, lineNum, param, tokenStack)
+}
+
+/* Checks for '+' or '*' and correct syntax after a number, parameter or inner function within an inner function's contents */
+void PostVar2(ArrayList<Function> functionArray, int lineNum, String param, ArrayList<Token> tokenStack) : { Token add; Token multi; }
+{
+  add=<ADD> { tokenStack.add(add); } FuncParam(functionArray, lineNum, param, tokenStack) | multi=<MULTI> { tokenStack.add(multi); } FuncParam(functionArray, lineNum, param, tokenStack)
+}
+
+/* Checks for parameter, number or function within an inner functions contents */
+void FuncParam(ArrayList<Function> functionArray, int lineNum, String param, ArrayList<Token> tokenStack) : { Token newParam; Token num; Token func; }
+{
+  newParam=<PARAM> {
+    if (param == null) { //throws an error when a parameter is referenced in MAIN
+      throw new ParseException("CUSTOMParameter '" + newParam.image + "' referenced in MAIN, which cannot contain parameters line " + Integer.toString(lineNum) + ",");
+    }
+    if (!newParam.image.equals(param)) { //throws an error when the incorrect parameter is referenced in a function
+      throw new ParseException("CUSTOMUndefined parameter referenced '" + newParam.image + "', parameter for this function previously defined as " + param + " line " + Integer.toString(lineNum) + ",");
+    }
+    tokenStack.add(newParam);
+  } ContinueCheck2(functionArray, lineNum, param, tokenStack) |
+  num=<NUM> { tokenStack.add(num); } ContinueCheck2(functionArray, lineNum, param, tokenStack) |
+  func=<FUNC> {
+    tokenStack.add(func); } <LBRACE> FuncParam(functionArray, lineNum, param, tokenStack) ContinueCheck2(functionArray, lineNum, param, tokenStack)
+}
